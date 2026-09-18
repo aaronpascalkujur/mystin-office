@@ -1,4 +1,5 @@
 {
+  "connectors": {},
   "agents": [
     {
       "id": "writer",

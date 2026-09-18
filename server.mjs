@@ -33,9 +33,34 @@ const MIME = {
   '.json': 'application/json; charset=utf-8'
 };
 
-async function loadAgents() {
+async function loadConfig() {
   const raw = await fs.readFile(AGENTS_FILE, 'utf-8');
-  return JSON.parse(raw).agents;
+  const parsed = JSON.parse(raw);
+  return { agents: parsed.agents || [], connectors: parsed.connectors || {} };
+}
+
+async function loadAgents() {
+  return (await loadConfig()).agents;
+}
+
+// Builds the MCP server config for one agent. Agents get no tools unless they
+// name connectors, and then only the ones they name — the roster file is the
+// only place tool access can be granted. An agent pointing at a connector that
+// doesn't exist is a config mistake we refuse to guess about: running the task
+// with tools silently missing would look like the agent simply did a bad job.
+function connectorsFor(agent, connectors) {
+  const names = agent.connectors || [];
+  if (!Array.isArray(names)) {
+    throw new Error(`agent "${agent.id}" has a "connectors" field that isn't a list`);
+  }
+  const mcpServers = {};
+  for (const name of names) {
+    if (!Object.prototype.hasOwnProperty.call(connectors, name)) {
+      throw new Error(`agent "${agent.id}" refers to unknown connector "${name}"`);
+    }
+    mcpServers[name] = connectors[name];
+  }
+  return mcpServers;
 }
 
 function readBody(req) {
@@ -51,12 +76,21 @@ function readBody(req) {
 }
 
 // Runs the agent's task through the Claude Code CLI in one-shot print mode and
-// returns the plain-text result. The agent gets no tools and no MCP servers
-// (text out only) — this MVP only ever writes files itself, on the server side.
-// The task goes in on stdin, not argv, so it can't be parsed as a CLI flag and
-// isn't bound by the per-argument size limit. The process is killed if it runs
-// past AGENT_TIMEOUT_MS or if `signal` aborts (the browser went away).
-function runAgent({ systemPrompt, task, model, signal }) {
+// returns the plain-text result. The task goes in on stdin, not argv, so it
+// can't be parsed as a CLI flag and isn't bound by the per-argument size limit.
+// The process is killed if it runs past AGENT_TIMEOUT_MS or if `signal` aborts
+// (the browser went away).
+//
+// Tool access is deny-by-default and stays that way:
+//   --tools ''          built-in tools (Bash, Edit, WebFetch…) are always off,
+//                       whether or not the agent has connectors.
+//   --strict-mcp-config ignore any MCP servers configured elsewhere on the
+//                       machine, so only what we pass in here can load.
+// An agent with connectors additionally gets --mcp-config with just its own
+// servers, and --allowed-tools naming only those servers. --permission-prompts
+// none means anything outside that list is denied rather than hanging on a
+// prompt nobody is there to answer.
+function runAgent({ systemPrompt, task, model, signal, mcpServers }) {
   return new Promise((resolve, reject) => {
     const args = [
       '-p',
@@ -66,6 +100,12 @@ function runAgent({ systemPrompt, task, model, signal }) {
       '--strict-mcp-config',
       '--no-session-persistence'
     ];
+    const serverNames = Object.keys(mcpServers || {});
+    if (serverNames.length) {
+      args.push('--mcp-config', JSON.stringify({ mcpServers }));
+      args.push('--allowed-tools', ...serverNames.map((n) => `mcp__${n}`));
+      args.push('--permission-prompts', 'none');
+    }
     if (model) args.push('--model', model);
 
     const child = spawn('claude', args, {
@@ -158,7 +198,7 @@ function slugify(text) {
     .slice(0, 40) || 'task';
 }
 
-async function saveNote({ agent, task, result }) {
+async function saveNote({ agent, task, result, connectors = [] }) {
   await fs.mkdir(NOTES_DIR, { recursive: true });
   const now = new Date();
   const stamp = now.toISOString().replace(/[:.]/g, '-');
@@ -168,6 +208,10 @@ async function saveNote({ agent, task, result }) {
     `agent: ${agent.name}`,
     `agentId: ${agent.id}`,
     `date: ${now.toISOString()}`,
+    // Recorded so you can tell after the fact which deliverables were produced
+    // by an agent that had tool access. Spread rather than a '' placeholder:
+    // the blank strings further down are load-bearing for the note format.
+    ...(connectors.length ? [`connectors: ${connectors.join(', ')}`] : []),
     '---',
     '',
     `## Task`,
@@ -342,7 +386,7 @@ const server = http.createServer(async (req, res) => {
         sendJSON(res, 400, { error: 'text is required' });
         return;
       }
-      const agents = await loadAgents();
+      const { agents, connectors } = await loadConfig();
       if (!agents.length) {
         sendJSON(res, 500, { error: 'no agents configured' });
         return;
@@ -369,6 +413,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      let mcpServers;
+      try {
+        mcpServers = connectorsFor(agent, connectors);
+      } catch (err) {
+        sendJSON(res, 500, { error: err.message });
+        return;
+      }
+      const usedConnectors = Object.keys(mcpServers);
+
       const related = findRelatedNotes(task, agent, await readNotes());
       const notesBrief = buildNotesBrief(related);
 
@@ -382,19 +435,26 @@ const server = http.createServer(async (req, res) => {
 
       let result;
       try {
-        result = await runAgent({ systemPrompt, task, model: agent.model, signal: controller.signal });
+        result = await runAgent({
+          systemPrompt,
+          task,
+          model: agent.model,
+          signal: controller.signal,
+          mcpServers
+        });
       } catch (err) {
         if (!controller.signal.aborted) sendJSON(res, 502, { error: err.message });
         return;
       }
 
-      const file = await saveNote({ agent, task, result });
+      const file = await saveNote({ agent, task, result, connectors: usedConnectors });
       sendJSON(res, 200, {
         agent: agent.name,
         result,
         file,
         routed,
-        usedNotes: related.map((n) => n.file)
+        usedNotes: related.map((n) => n.file),
+        usedConnectors
       });
       return;
     }

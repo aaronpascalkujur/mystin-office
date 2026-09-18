@@ -52,10 +52,14 @@ submitBtn.addEventListener('click', async () => {
     resultText.textContent = data.result;
     resultFile.textContent = data.file;
     const used = data.usedNotes || [];
-    resultNotes.textContent = used.length
-      ? `Read ${used.length} earlier ${used.length === 1 ? 'note' : 'notes'} first: ${used.join(', ')}`
-      : '';
-    resultNotes.hidden = used.length === 0;
+    const connectors = data.usedConnectors || [];
+    const lines = [];
+    if (used.length) {
+      lines.push(`Read ${used.length} earlier ${used.length === 1 ? 'note' : 'notes'} first: ${used.join(', ')}`);
+    }
+    if (connectors.length) lines.push(`Connectors available: ${connectors.join(', ')}`);
+    resultNotes.textContent = lines.join('\n');
+    resultNotes.hidden = lines.length === 0;
     resultPanel.hidden = false;
     statusEl.textContent = '';
     taskInput.value = '';

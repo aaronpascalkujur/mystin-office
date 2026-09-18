@@ -1,8 +1,9 @@
 # Mystin Office
 
 A small roster of AI agents that pick up tasks you type, do the work with Claude, and file the
-result into a `notes/` folder. Tasks can be routed to an agent automatically, and agents read
-the notes from related past work before starting. No 3D office, no routines, no connectors yet.
+result into a `notes/` folder. Tasks can be routed to an agent automatically, agents read the
+notes from related past work before starting, and individual agents can be given connectors.
+No 3D office and no routines yet.
 
 ## What you need
 
@@ -65,6 +66,47 @@ Add, remove, or rewrite agents freely — restart the server to pick up changes.
 | `public/` | The browser UI |
 | `notes/` | Saved deliverables, one Markdown file per task |
 
+## Connectors (optional)
+
+By default agents have no tools at all: they read a prompt and write text back. A connector
+is an MCP server you hand to a specific agent, and only that agent.
+
+Define the servers once at the top of `agents.json`, then opt an agent in by name:
+
+```json
+{
+  "connectors": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/you/work"]
+    }
+  },
+  "agents": [
+    { "id": "researcher", "name": "Researcher", "connectors": ["filesystem"], "...": "..." }
+  ]
+}
+```
+
+An agent listing no connectors is unchanged — no tools, no MCP servers. An agent pointing at
+a connector that isn't defined is a config error and its tasks fail loudly, rather than
+quietly running without the tools it was supposed to have.
+
+What stays locked down either way:
+
+- Built-in tools (`Bash`, `Edit`, `WebFetch`…) are **always** off, connectors or not. A
+  connector grants that server's tools and nothing else.
+- MCP servers configured elsewhere on your machine are ignored, so only what's in
+  `agents.json` can load.
+- Anything outside the agent's own connectors is denied rather than prompting, since nobody
+  is sitting at a terminal to answer.
+- The routing call never gets connectors. It only picks a name.
+
+**What this actually means:** an MCP server is a local process started with your privileges,
+and the agent driving it is acting on a task typed into a web form. Give an agent the
+narrowest connector that does the job — scope the filesystem server to one directory rather
+than your home folder. Notes record which connectors were in play, so you can tell later
+which deliverables came from an agent that had tool access.
+
 ## Tuning
 
 Environment variables, all optional:
@@ -79,9 +121,5 @@ keyword match has to be are constants at the top of `server.mjs`.
 
 ## What's next (not built yet)
 
-Connectors (MCP servers wired to specific agents), and scheduled/recurring tasks.
-
-Connectors are the bigger design question: agents currently run with `--tools ""` and
-`--strict-mcp-config`, so they have no tools and no MCP servers at all. Wiring connectors
-means letting specific agents out of that box, which should stay opt-in per agent rather
-than becoming the default.
+Scheduled and recurring tasks — a standing brief that runs on its own each morning instead of
+waiting for you to type it.
