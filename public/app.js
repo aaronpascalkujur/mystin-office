@@ -6,11 +6,13 @@ const resultPanel = document.getElementById('result-panel');
 const resultAgent = document.getElementById('result-agent');
 const resultText = document.getElementById('result-text');
 const resultFile = document.getElementById('result-file');
+const resultNotes = document.getElementById('result-notes');
 const notesList = document.getElementById('notes-list');
 
 async function loadAgents() {
   const agents = await (await fetch('/api/agents')).json();
-  agentSelect.innerHTML = agents
+  const auto = '<option value="auto" title="Let the office decide who takes it">Auto — pick the best fit</option>';
+  agentSelect.innerHTML = auto + agents
     .map((a) => `<option value="${a.id}" title="${escapeHtml(a.does)}">${a.name} — ${a.role}</option>`)
     .join('');
 }
@@ -46,9 +48,14 @@ submitBtn.addEventListener('click', async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'something went wrong');
 
-    resultAgent.textContent = data.agent;
+    resultAgent.textContent = data.routed ? `${data.agent} picked this up` : data.agent;
     resultText.textContent = data.result;
     resultFile.textContent = data.file;
+    const used = data.usedNotes || [];
+    resultNotes.textContent = used.length
+      ? `Read ${used.length} earlier ${used.length === 1 ? 'note' : 'notes'} first: ${used.join(', ')}`
+      : '';
+    resultNotes.hidden = used.length === 0;
     resultPanel.hidden = false;
     statusEl.textContent = '';
     taskInput.value = '';
