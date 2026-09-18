@@ -9,6 +9,12 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const NOTES_DIR = path.join(__dirname, 'notes');
 const AGENTS_FILE = path.join(__dirname, 'agents.json');
 const PORT = process.env.PORT || 4521;
+const HOST = '127.0.0.1';
+// Only these hosts/origins may talk to the server. Checking Host blocks DNS
+// rebinding; checking Origin blocks other websites posting tasks.
+const ALLOWED_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
+const ALLOWED_ORIGINS = new Set([...ALLOWED_HOSTS].map((h) => `http://${h}`));
+const AGENT_TIMEOUT_MS = 5 * 60 * 1000;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -35,26 +41,45 @@ function readBody(req) {
 }
 
 // Runs the agent's task through the Claude Code CLI in one-shot print mode and
-// returns the plain-text result. The agent gets no tools (read-only, text out) —
-// this MVP only ever writes files itself, on the server side.
-function runAgent({ systemPrompt, task, model }) {
+// returns the plain-text result. The agent gets no tools and no MCP servers
+// (text out only) — this MVP only ever writes files itself, on the server side.
+// The task goes in on stdin, not argv, so it can't be parsed as a CLI flag and
+// isn't bound by the per-argument size limit. The process is killed if it runs
+// past AGENT_TIMEOUT_MS or if `signal` aborts (the browser went away).
+function runAgent({ systemPrompt, task, model, signal }) {
   return new Promise((resolve, reject) => {
     const args = [
-      '-p', task,
+      '-p',
       '--output-format', 'json',
       '--system-prompt', systemPrompt,
-      '--disallowed-tools', 'Bash,Read,Write,Edit,NotebookEdit,WebFetch,WebSearch',
+      '--tools', '',
+      '--strict-mcp-config',
       '--no-session-persistence'
     ];
     if (model) args.push('--model', model);
 
-    const child = spawn('claude', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('claude', args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      signal,
+      timeout: AGENT_TIMEOUT_MS
+    });
+    child.stdin.on('error', () => {}); // surfaced via 'close'/'error' below
+    child.stdin.end(task);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (c) => (stdout += c));
     child.stderr.on('data', (c) => (stderr += c));
-    child.on('error', (err) => reject(new Error(`could not start claude CLI: ${err.message}`)));
-    child.on('close', (code) => {
+    child.on('error', (err) => {
+      if (err.name === 'AbortError') reject(new Error('task cancelled'));
+      else reject(new Error(`could not start claude CLI: ${err.message}`));
+    });
+    child.on('close', (code, killedBy) => {
+      if (killedBy) {
+        reject(new Error(signal?.aborted
+          ? 'task cancelled'
+          : `claude took longer than ${AGENT_TIMEOUT_MS / 60000} minutes and was stopped`));
+        return;
+      }
       if (code !== 0 && !stdout.trim()) {
         reject(new Error(stderr.trim() || `claude exited with code ${code}`));
         return;
@@ -127,10 +152,16 @@ async function listNotes() {
 }
 
 async function serveStatic(req, res) {
-  let reqPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  let reqPath;
+  try {
+    reqPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  } catch {
+    res.writeHead(400).end('bad request');
+    return;
+  }
   if (reqPath === '/') reqPath = '/index.html';
   const filePath = path.join(PUBLIC_DIR, reqPath);
-  if (!filePath.startsWith(PUBLIC_DIR)) {
+  if (!filePath.startsWith(PUBLIC_DIR + path.sep)) {
     res.writeHead(403).end('forbidden');
     return;
   }
@@ -153,6 +184,11 @@ function sendJSON(res, status, obj) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
 
+  if (!ALLOWED_HOSTS.has(req.headers.host)) {
+    res.writeHead(403).end('forbidden');
+    return;
+  }
+
   try {
     if (url.pathname === '/api/agents' && req.method === 'GET') {
       sendJSON(res, 200, await loadAgents());
@@ -165,16 +201,28 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === '/api/task' && req.method === 'POST') {
-      const body = JSON.parse((await readBody(req)) || '{}');
-      const task = (body.text || '').trim();
+      const origin = req.headers.origin;
+      const contentType = req.headers['content-type'] || '';
+      if ((origin && !ALLOWED_ORIGINS.has(origin)) || !contentType.startsWith('application/json')) {
+        sendJSON(res, 403, { error: 'forbidden' });
+        return;
+      }
+      let body;
+      try {
+        body = JSON.parse((await readBody(req)) || '{}');
+      } catch {
+        sendJSON(res, 400, { error: 'request body must be valid JSON' });
+        return;
+      }
+      const task = typeof body.text === 'string' ? body.text.trim() : '';
       if (!task) {
         sendJSON(res, 400, { error: 'text is required' });
         return;
       }
       const agents = await loadAgents();
-      const agent = agents.find((a) => a.id === body.agentId) || agents[0];
+      const agent = agents.find((a) => a.id === body.agentId);
       if (!agent) {
-        sendJSON(res, 500, { error: 'no agents configured' });
+        sendJSON(res, 400, { error: `unknown agent: ${body.agentId}` });
         return;
       }
 
@@ -185,11 +233,17 @@ const server = http.createServer(async (req, res) => {
         'Do the task the user gives you directly. Write only the finished deliverable, no preamble like "Sure, here is...".'
       ].filter(Boolean).join('\n');
 
+      // Stop the agent if the browser disconnects before we answer.
+      const controller = new AbortController();
+      res.on('close', () => {
+        if (!res.writableEnded) controller.abort();
+      });
+
       let result;
       try {
-        result = await runAgent({ systemPrompt, task, model: body.model });
+        result = await runAgent({ systemPrompt, task, model: agent.model, signal: controller.signal });
       } catch (err) {
-        sendJSON(res, 502, { error: err.message });
+        if (!controller.signal.aborted) sendJSON(res, 502, { error: err.message });
         return;
       }
 
@@ -209,6 +263,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   console.log(`Mystin Office listening on http://localhost:${PORT}`);
 });

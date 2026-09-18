@@ -35,9 +35,12 @@ Edit `agents.json` — each agent is:
   "name": "Writer",
   "role": "Writing & Content Agent",
   "does": "Drafts and edits written material: emails, posts, docs, copy.",
-  "brief": "Plain, direct sentences. No filler, no corporate speak."
+  "brief": "Plain, direct sentences. No filler, no corporate speak.",
+  "model": "sonnet"
 }
 ```
+
+`model` is optional: any value `claude --model` accepts. Leave it out to use your Claude Code default.
 
 Add, remove, or rewrite agents freely — restart the server to pick up changes.
 
