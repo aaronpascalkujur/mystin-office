@@ -1,0 +1,13 @@
+{
+  "name": "mystin-office",
+  "version": "0.1.0",
+  "description": "A small roster of AI agents that pick up tasks you type and file their work into a notes folder, powered by the Claude Code CLI.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
