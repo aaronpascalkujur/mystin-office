@@ -1,4 +1,5 @@
 {
+  "prebuilt": ["linkedin"],
   "connectors": {},
   "agents": [
     {

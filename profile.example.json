@@ -1,0 +1,7 @@
+{
+  "who I am": "A sentence or two: what you do, where you are, what you are working toward.",
+  "hard constraints": "Rules every agent must follow when writing as you. Example: never make a claim that cannot be backed with a link or a measurement; never invent a number, leave a marked blank instead.",
+  "voice": "How you sound. Words you use, words you never use, how long your sentences run.",
+  "projects": "What you have actually built, with the repo or link for each one, and the specific decisions inside them worth talking about.",
+  "numbers": "Real figures you are willing to publish: follower counts, benchmarks, timings. Only measured ones."
+}
