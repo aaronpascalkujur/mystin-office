@@ -1124,6 +1124,10 @@ const server = http.createServer(async (req, res) => {
 
       sendJSON(res, 200, {
         agent: agent.name,
+        // Who actually took it, which is only the same as who was asked when
+        // the task was not routed. The name is for reading; the id is what ties
+        // a result back to a desk on the floor, and two agents may share a name.
+        agentId: agent.id,
         result,
         file,
         routed,

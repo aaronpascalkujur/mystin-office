@@ -59,6 +59,79 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 #status { margin-left: 0.75rem; color: var(--muted); font-size: 0.85rem; }
 
+.floor-panel h2 { margin: 0 0 0.2rem; font-size: 1rem; }
+.chosen-agent { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.9rem; }
+
+#floor { display: flex; flex-direction: column; gap: 0.9rem; }
+
+/* Rooms wrap rather than sitting on a fixed grid, so adding a department never
+   means picking a column for it. */
+.rooms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 0.9rem;
+}
+
+.room {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem;
+}
+.room-name {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 0.55rem;
+}
+.desks { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.desk {
+  position: relative;
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+  font-weight: 500;
+}
+.desk:hover { border-color: var(--muted); }
+.desk.reception { border-style: dashed; }
+.desk-name { font-size: 0.9rem; }
+.desk-role, .desk-reports { font-size: 0.72rem; color: var(--muted); font-weight: 400; }
+.desk-reports { font-style: italic; }
+
+.desk.chosen { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.desk.chosen .desk-name { color: var(--accent); }
+
+/* The manager of whichever desk you are pointing at or have tabbed to. */
+.desk.is-manager { border-color: var(--muted); background: #1e232d; }
+
+/* A desk is lit only while its agent is actually mid-task. */
+.desk.busy::after {
+  content: '';
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: desk-pulse 1.2s ease-in-out infinite;
+}
+@keyframes desk-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .desk.busy::after { animation: none; }
+}
+
 .result-panel h2 { margin-top: 0; font-size: 1rem; color: var(--accent); }
 .result-panel pre { white-space: pre-wrap; font-family: inherit; margin: 0.5rem 0; line-height: 1.5; }
 .note-path { color: var(--muted); font-size: 0.8rem; margin-bottom: 0.25rem; }

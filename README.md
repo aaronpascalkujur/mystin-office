@@ -26,8 +26,9 @@ the same reason.
 
 ## How it works
 
-1. Type a task and either pick an agent or leave the dropdown on **Auto**.
-2. On Auto, a quick routing call shows the roster to a small model and asks which agent
+1. Click a desk on the floor to pick an agent, or leave it at the **front desk** to have the
+   office choose.
+2. From the front desk, a quick routing call shows the roster to a small model and asks which agent
    should take it. If routing fails or answers with something unrecognisable, the task
    goes to the first agent rather than failing outright.
 3. The server looks through past notes for ones sharing keywords with your task and quotes
@@ -156,6 +157,26 @@ first agent in the list is the fallback when routing can't decide.
 Add, remove, or rewrite agents freely. `agents.json` is read fresh on every request, so a
 change is live as soon as you save it — reload the page to see it.
 
+## The floor
+
+The page opens on the office rather than a dropdown. Each department is a room, each agent a
+desk, and clicking a desk is how you choose who gets the task. The **front desk** at the top
+is the one that isn't an agent: leave it selected and the office routes the task itself.
+
+Under each name is what that agent does and, if it has one, who it reports to. Point at a
+desk — or tab to it — and its manager's desk lights up, which is how a reporting line stays
+readable without turning the floor into an org tree.
+
+A desk pulses while that agent is mid-task. From the front desk it's reception that pulses
+until the router has chosen someone, because until then nobody has been picked. When the
+answer comes back every desk goes dark: the result panel says who did it, and a still-lit
+desk would be claiming work that has already finished.
+
+Desk positions aren't configurable, and that's deliberate — rooms and desks are laid out from
+the roster, so adding an agent never means choosing coordinates for it, and the floor can't
+drift out of step with `agents.json`. One limit worth knowing: a desk only lights for a task
+**you** sent from that tab. The page has no way to hear about a task started anywhere else.
+
 ## Who sits where
 
 The roster is a list; an office is a floor plan. `placements` is the org chart, a separate
@@ -178,10 +199,10 @@ placing too, and their files are shipped in the repo for anyone to use. Which de
 *you* dropped the LinkedIn agent into isn't part of that shared agent — it's part of your
 office. One map keeps both kinds of agent placed the same way.
 
-Right now this is **description only**. It changes nothing about how the office behaves: the
-routing fallback is still whoever is first in `agents.json`, not whoever is top of the chart,
-and no agent is told who its manager is. It's the data the office floor will be drawn from,
-and the thing a manager could later actually *do* something with.
+This is what the floor is drawn from, but it is still **description only**. It changes nothing
+about how the office behaves: the routing fallback is whoever is first in `agents.json`, not
+whoever is top of the chart, and no agent is told who its manager is. Reporting lines are
+something you can see, not yet something anyone acts on.
 
 What the server won't accept, because each one would silently draw the wrong picture:
 
@@ -380,9 +401,11 @@ top of `server.mjs`.
 
 ## What's next (not built yet)
 
-An office floor: the roster drawn as departments and desks instead of a dropdown, with each
-agent visible at its own desk and lit up while it's working. `placements` above is the data
-that page will be built from.
+A floor that shows work this browser didn't start. A desk only lights for a task you sent
+from this tab, because the page has no way to hear about anything else. Server-sent events
+would make the floor show the office rather than your own session.
+
+Agents that move between desks, instead of sitting still and lighting up.
 
 A hierarchy that does something — a manager that can hand a piece of its work to someone
 below it, rather than an org chart that only describes.
