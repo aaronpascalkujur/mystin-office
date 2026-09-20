@@ -29,6 +29,20 @@
       <pre id="result-text"></pre>
       <p class="note-path">Saved to <code id="result-file"></code></p>
       <p class="used-notes" id="result-notes" hidden></p>
+
+      <div class="verdict" id="verdict-bar">
+        <span class="verdict-label">What did you do with it?</span>
+        <button type="button" class="verdict-btn" data-verdict="kept">Used it as-is</button>
+        <button type="button" class="verdict-btn" data-verdict="edited">Fixed it up</button>
+        <button type="button" class="verdict-btn" data-verdict="discarded">Threw it away</button>
+        <span class="verdict-status" id="verdict-status"></span>
+      </div>
+
+      <div class="correction" id="correction-box" hidden>
+        <label for="correction-input">Paste what you actually used — future briefs will quote this instead of the draft above</label>
+        <textarea id="correction-input" rows="6"></textarea>
+        <button type="button" id="correction-save">Save correction</button>
+      </div>
     </section>
 
     <section class="notes-panel">

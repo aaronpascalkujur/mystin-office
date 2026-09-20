@@ -69,3 +69,35 @@ button:disabled { opacity: 0.6; cursor: default; }
 #notes-list li { border-bottom: 1px solid var(--border); padding-bottom: 0.75rem; font-size: 0.9rem; }
 #notes-list li:last-child { border-bottom: none; padding-bottom: 0; }
 #notes-list .empty { color: var(--muted); }
+
+.verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.9rem; }
+.verdict-label { color: var(--muted); font-size: 0.8rem; margin-right: 0.2rem; }
+.verdict-status { color: var(--muted); font-size: 0.8rem; margin-left: 0.3rem; }
+
+.verdict-btn {
+  margin-top: 0;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.verdict-btn:hover { color: var(--text); border-color: var(--muted); }
+.verdict-btn.chosen { background: var(--accent); color: #0f1115; border-color: var(--accent); }
+
+.correction { margin-top: 0.75rem; }
+.correction label { margin-top: 0; }
+.correction button { margin-top: 0.5rem; padding: 0.4rem 0.9rem; font-size: 0.85rem; }
+
+.verdict-row { display: inline-flex; gap: 0.3rem; margin-top: 0.4rem; }
+.verdict-tag {
+  font-size: 0.7rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+}
+.verdict-tag.kept { color: var(--accent); border-color: var(--accent); }
+.verdict-tag.discarded { opacity: 0.6; text-decoration: line-through; }
