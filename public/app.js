@@ -10,6 +10,8 @@ const replyInput = document.getElementById('reply-input');
 const replyBtn = document.getElementById('reply-btn');
 const replyStatus = document.getElementById('reply-status');
 const resultFile = document.getElementById('result-file');
+const notePath = document.getElementById('note-path');
+const noteGone = document.getElementById('note-gone');
 const resultNotes = document.getElementById('result-notes');
 const notesList = document.getElementById('notes-list');
 const verdictBar = document.getElementById('verdict-bar');
@@ -167,7 +169,13 @@ async function runTask({ text, threadId, statusTarget, button }) {
     }
     renderTranscript();
 
-    resultFile.textContent = data.file;
+    // No file means the note was tidied away mid-run. The reply still came
+    // back, so it is shown — there is just nothing on disk behind it, and
+    // nothing to rate.
+    resultFile.textContent = data.file || '';
+    notePath.hidden = !data.file;
+    noteGone.hidden = Boolean(data.file);
+    verdictBar.hidden = !data.file;
     const used = data.usedNotes || [];
     const connectors = data.usedConnectors || [];
     const lines = [];

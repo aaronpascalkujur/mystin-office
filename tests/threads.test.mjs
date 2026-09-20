@@ -29,6 +29,9 @@ let server;
 let stubDir;
 let promptFile;
 let inputFile;
+// Holds a path for the stub to delete before it answers, which is how a test
+// makes a note vanish *during* a turn rather than before one.
+let deleteFile;
 // Every note this file creates, so the archive is left as it was found.
 const created = new Set();
 
@@ -66,6 +69,7 @@ before(async () => {
   stubDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mystin-thread-stub-'));
   promptFile = path.join(stubDir, 'system-prompt.txt');
   inputFile = path.join(stubDir, 'input.txt');
+  deleteFile = path.join(stubDir, 'delete.txt');
   const countFile = path.join(stubDir, 'count.txt');
   const stub = path.join(stubDir, 'claude');
   await fs.writeFile(stub, [
@@ -75,6 +79,11 @@ before(async () => {
     '  shift',
     'done',
     'cat > "$STUB_INPUT_FILE"',
+    // Deletes a note from inside the agent run, so the file is gone by the time
+    // the server comes back to write to it. The trigger is cleared after use so
+    // it only fires for the one turn a test armed it for.
+    'd=$(cat "$STUB_DELETE_FILE" 2>/dev/null || true)',
+    'if [ -n "$d" ]; then rm -f "$d"; : > "$STUB_DELETE_FILE"; fi',
     'n=$(cat "$STUB_COUNT_FILE" 2>/dev/null || echo 0)',
     'n=$((n+1))',
     'printf %s "$n" > "$STUB_COUNT_FILE"',
@@ -91,7 +100,8 @@ before(async () => {
       PATH: `${stubDir}:${process.env.PATH}`,
       STUB_PROMPT_FILE: promptFile,
       STUB_INPUT_FILE: inputFile,
-      STUB_COUNT_FILE: countFile
+      STUB_COUNT_FILE: countFile,
+      STUB_DELETE_FILE: deleteFile
     }
   });
   await new Promise((resolve, reject) => {
@@ -210,6 +220,43 @@ test('a long conversation drops the middle and keeps the opening', async () => {
   // agent is sent, not about what gets written down.
   const raw = await readNote(last.body.file);
   assert.match(raw, /MIDDLE-MARKER/);
+});
+
+// notes/ is a folder you are invited to tidy, and a conversation writes back to
+// one note, so deleting that note leaves the next reply nowhere to go. It used
+// to be a raw ENOENT 500. The note is deliberately not rebuilt from the turns
+// still held in memory: a note may have been deleted precisely because of what
+// was in it, and quietly restoring it would undo that.
+test('deleting a note ends its conversation rather than breaking it', async () => {
+  const first = await send({ agentId: 'writer', text: 'draft the lintel memo' });
+  await fs.rm(path.join(NOTES_DIR, first.body.file));
+
+  const second = await send({ threadId: first.body.threadId, text: 'make it shorter' });
+  assert.equal(second.status, 400);
+  assert.match(second.body.error, /note was deleted/);
+  // No agent ran: the check happens before the CLI, so a dead thread is free.
+  assert.equal(second.input, '');
+
+  // And the refusal is final — the thread is dropped, not left half-alive.
+  const third = await send({ threadId: first.body.threadId, text: 'hello?' });
+  assert.equal(third.status, 400);
+  assert.match(third.body.error, /no longer open/);
+});
+
+// The same deletion, but landing in the window the check above cannot cover:
+// the agent run itself, which is the slow part of a turn. The reply has been
+// paid for by then, so it is handed back rather than binned to punish a
+// deleted file. There is just nothing on disk behind it.
+test('a note deleted mid-turn costs the note, not the reply', async () => {
+  const first = await send({ agentId: 'writer', text: 'draft the gantry notice' });
+  await fs.writeFile(deleteFile, path.join(NOTES_DIR, first.body.file), 'utf-8');
+
+  const second = await send({ threadId: first.body.threadId, text: 'add a date' });
+  assert.equal(second.status, 200, `turn failed: ${JSON.stringify(second.body)}`);
+  assert.match(second.body.result, /AGENT-REPLY-\d+/);
+  assert.equal(second.body.file, null, 'nothing was written, so no filename is claimed');
+  assert.equal(second.body.threadId, null, 'a conversation ends with its note');
+  assert.equal(second.body.turn, 2);
 });
 
 test('a thread refuses a cross-site post like everything else', async () => {

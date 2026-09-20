@@ -601,9 +601,22 @@ function parseNote(file, raw) {
 // The verdict is cleared, though, and deliberately: it was a judgement on a
 // result this turn has just replaced. The correction is kept, because that is
 // text you wrote, and text you wrote does not get thrown away quietly.
+//
+// Returns false if the note is gone. notes/ is a folder you are meant to tidy,
+// so a note can be deleted mid-conversation, and the turns held in memory are
+// deliberately not used to write it back: a note may have been deleted exactly
+// because of what was in it. Only a vanished note is tolerated — a permissions
+// or I/O error still surfaces.
 async function rewriteThreadNote(thread) {
   const full = path.join(NOTES_DIR, thread.file);
-  const existing = parseNote(thread.file, await fs.readFile(full, 'utf-8'));
+  let raw;
+  try {
+    raw = await fs.readFile(full, 'utf-8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+  const existing = parseNote(thread.file, raw);
   const turns = thread.turns;
   await fs.writeFile(full, renderNote({
     ...existing,
@@ -613,6 +626,18 @@ async function rewriteThreadNote(thread) {
     result: turns[turns.length - 1].text,
     threadLog: renderThreadLog(turns.slice(1, -1), thread.agentName)
   }), 'utf-8');
+  return true;
+}
+
+// Same ENOENT-only tolerance, asked before a turn starts rather than after.
+async function noteExists(file) {
+  try {
+    await fs.access(path.join(NOTES_DIR, file));
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
 }
 
 // A note filename arrives from the browser, so it is never treated as a path.
@@ -869,6 +894,16 @@ const server = http.createServer(async (req, res) => {
         });
         return;
       }
+      // A conversation writes back to one note, so if that note has been tidied
+      // away there is nowhere for the reply to go. Asked here rather than at
+      // write time so it costs no CLI run.
+      if (thread && !(await noteExists(thread.file))) {
+        threads.delete(threadId);
+        sendJSON(res, 400, {
+          error: 'that conversation\'s note was deleted, so there is nowhere to write the reply — you will need to start a new task'
+        });
+        return;
+      }
 
       const routed = !thread && body.agentId === 'auto';
       if (!thread && !routed && !agents.some((a) => a.id === body.agentId)) {
@@ -973,13 +1008,24 @@ const server = http.createServer(async (req, res) => {
       // context too. Every turn it takes is another chance for a fetched page
       // to steer it, with more in the window each time to steer it toward.
       const canThread = !networked;
-      let file;
+      let file = null;
       let openThread = thread;
+      let turn = 1;
 
       if (thread) {
         thread.turns.push({ role: 'user', text: task }, { role: 'agent', text: result });
-        file = thread.file;
-        await rewriteThreadNote(thread);
+        turn = thread.turns.length / 2;
+        // The note can still go between the check above and here — the CLI run
+        // in between is the slow part. The reply is handed back regardless: it
+        // has already been paid for, and binning it to punish a deleted file
+        // helps nobody. The conversation ends, since there is nothing left to
+        // append to.
+        if (await rewriteThreadNote(thread)) {
+          file = thread.file;
+        } else {
+          threads.delete(thread.id);
+          openThread = null;
+        }
       } else {
         file = await saveNote({
           agent,
@@ -1011,7 +1057,7 @@ const server = http.createServer(async (req, res) => {
         // Absent for a networked agent, which is how the browser knows not to
         // offer a reply box.
         threadId: openThread ? openThread.id : null,
-        turn: openThread ? openThread.turns.length / 2 : 1
+        turn
       });
       return;
     }
