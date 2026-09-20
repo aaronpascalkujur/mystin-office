@@ -13,10 +13,16 @@ No 3D office and no routines yet.
 ## Run it
 
 ```bash
+npm install
 npm start
 ```
 
 Then open http://localhost:4521.
+
+The one dependency is the MCP SDK, which `connectors/fetch.mjs` is built on. Skip the install
+and the server still starts and ordinary agents still work — nothing in `server.mjs` imports
+it — but the fetch connector can't launch, so Researcher loses the web. `npm test` fails for
+the same reason.
 
 ## How it works
 
