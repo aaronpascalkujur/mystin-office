@@ -174,6 +174,66 @@ narrowest connector that does the job — scope the filesystem server to one dir
 than your home folder. Notes record which connectors were in play, so you can tell later
 which deliverables came from an agent that had tool access.
 
+## Reading the web
+
+Researcher ships with `fetch`, a connector in this repo (`connectors/fetch.mjs`) that reads a
+page and hands back its text. It is ours rather than a package off npm because the limits
+below are the entire point of it, and those are not worth delegating to a dependency.
+
+It can only read hosts named in its `--allow` list in `agents.json`:
+
+```json
+"fetch": {
+  "network": true,
+  "command": "node",
+  "args": ["connectors/fetch.mjs", "--allow", "docs.anthropic.com,en.wikipedia.org"]
+}
+```
+
+Add hosts as you need them. With no `--allow` at all it refuses everything, so a
+half-configured connector fails closed instead of quietly opening the whole web. There is no
+search: Researcher can read a URL you give it, not go looking for one.
+
+Two things it will not do, whatever a task asks for:
+
+- **Reach a private address.** The hostname is resolved before the request and refused if it
+  lands on loopback, a LAN range, or link-local. This is a second gate independent of the
+  allowlist — allowlisting `localhost` still will not let an agent read this office's own API
+  on `127.0.0.1:4521`, or cloud metadata on `169.254.169.254`.
+- **Follow a redirect out of bounds.** Every hop is re-checked against both gates.
+
+Pages come back fenced and labelled as someone else's writing, the same way a pasted task
+does.
+
+### The rule that shapes the rest
+
+**An agent cannot both handle third-party content and reach the network.** Marking a
+connector `"network": true` and putting it on an agent with `handlesThirdPartyContent: true`
+is refused at load, and the whole office refuses to answer until you fix it.
+
+Either capability alone is fine. Together they are an exfiltration chain: text from a
+stranger can carry instructions, and a fetch tool is a way to send things out, so an injected
+comment could walk this office's context out inside a URL. That is why the LinkedIn agent
+stays offline — paste the post text instead.
+
+For the same reason, **an agent with a networked connector is told less about this office**.
+A fetched page is also a stranger's writing arriving in the context window, and anything
+sitting in the prompt can be asked for back out inside a URL. So a networked agent gets:
+
+- no personal layer — `profile.local.json` is left out of its prompt
+- no past notes — it doesn't get the usual continuity brief from earlier work, and its own
+  note records `usedNotes: []`
+
+It works from the task in front of it. Researcher loses voice, detail and continuity; an
+injection finds nothing worth taking. Notes are still *written* as normal — the restriction
+is on what gets read back in.
+
+**The honest limit:** once a connector can open sockets, this boundary is advisory. It shrinks
+what is worth stealing and who can be told to steal it. Enforcing it properly means the
+operating system — a network namespace, or a proxy that only lets the allowlist through.
+
+Run the checks with `npm test`.
+
 ## Tuning
 
 Environment variables, all optional:
