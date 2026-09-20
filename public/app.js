@@ -4,7 +4,11 @@ const submitBtn = document.getElementById('submit-btn');
 const statusEl = document.getElementById('status');
 const resultPanel = document.getElementById('result-panel');
 const resultAgent = document.getElementById('result-agent');
-const resultText = document.getElementById('result-text');
+const transcript = document.getElementById('transcript');
+const replyBox = document.getElementById('reply-box');
+const replyInput = document.getElementById('reply-input');
+const replyBtn = document.getElementById('reply-btn');
+const replyStatus = document.getElementById('reply-status');
 const resultFile = document.getElementById('result-file');
 const resultNotes = document.getElementById('result-notes');
 const notesList = document.getElementById('notes-list');
@@ -16,6 +20,29 @@ const correctionSave = document.getElementById('correction-save');
 
 // The note currently on screen, so the verdict buttons know what they apply to.
 let currentFile = null;
+// The open conversation, if there is one. A thread lives on the server; the
+// browser only holds its id and a copy of the turns to draw. null means this
+// result can't be continued — a networked agent, or a reload since it ran.
+let currentThreadId = null;
+let currentAgentName = '';
+let currentTurns = [];
+
+// Built as DOM nodes rather than innerHTML: every turn is either text a stranger
+// might have written or text a model produced, and neither belongs in markup.
+function renderTranscript() {
+  transcript.replaceChildren();
+  for (const turn of currentTurns) {
+    const block = document.createElement('div');
+    block.className = `turn ${turn.role}`;
+    const who = document.createElement('span');
+    who.className = 'turn-who';
+    who.textContent = turn.role === 'user' ? 'You' : currentAgentName;
+    const body = document.createElement('pre');
+    body.textContent = turn.text;
+    block.append(who, body);
+    transcript.append(block);
+  }
+}
 
 async function loadAgents() {
   const agents = await (await fetch('/api/agents')).json();
@@ -114,26 +141,32 @@ notesList.addEventListener('click', async (event) => {
   }
 });
 
-submitBtn.addEventListener('click', async () => {
-  const text = taskInput.value.trim();
-  if (!text) return;
-  const agentId = agentSelect.value;
-
-  submitBtn.disabled = true;
-  statusEl.textContent = 'Working…';
-  resultPanel.hidden = true;
+// One path for both the first task and every reply after it. The only
+// difference is threadId: sending one continues a conversation, omitting one
+// starts a fresh task and a fresh note.
+async function runTask({ text, threadId, statusTarget, button }) {
+  button.disabled = true;
+  statusTarget.textContent = 'Working…';
 
   try {
+    const body = threadId ? { threadId, text } : { agentId: agentSelect.value, text };
     const res = await fetch('/api/task', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId, text })
+      body: JSON.stringify(body)
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'something went wrong');
 
-    resultAgent.textContent = data.routed ? `${data.agent} picked this up` : data.agent;
-    resultText.textContent = data.result;
+    if (threadId) {
+      currentTurns.push({ role: 'user', text }, { role: 'agent', text: data.result });
+    } else {
+      currentAgentName = data.agent;
+      currentTurns = [{ role: 'user', text }, { role: 'agent', text: data.result }];
+      resultAgent.textContent = data.routed ? `${data.agent} picked this up` : data.agent;
+    }
+    renderTranscript();
+
     resultFile.textContent = data.file;
     const used = data.usedNotes || [];
     const connectors = data.usedConnectors || [];
@@ -144,17 +177,47 @@ submitBtn.addEventListener('click', async () => {
     if (connectors.length) lines.push(`Connectors available: ${connectors.join(', ')}`);
     resultNotes.textContent = lines.join('\n');
     resultNotes.hidden = lines.length === 0;
+
     currentFile = data.file;
+    currentThreadId = data.threadId || null;
+    // No threadId means the server won't take a follow-up for this one — a
+    // networked agent, which stays one-shot on purpose.
+    replyBox.hidden = !currentThreadId;
+    replyInput.value = '';
+    replyStatus.textContent = '';
+    // Every turn rewrites the note's result, so a verdict from the turn before
+    // is a judgement on text that is no longer there. Start the bar clean.
     resetVerdictBar();
     resultPanel.hidden = false;
-    statusEl.textContent = '';
-    taskInput.value = '';
+    statusTarget.textContent = '';
     await loadNotes();
+    return true;
   } catch (err) {
-    statusEl.textContent = `Error: ${err.message}`;
+    statusTarget.textContent = `Error: ${err.message}`;
+    return false;
   } finally {
-    submitBtn.disabled = false;
+    button.disabled = false;
   }
+}
+
+submitBtn.addEventListener('click', async () => {
+  const text = taskInput.value.trim();
+  if (!text) return;
+  resultPanel.hidden = true;
+  currentThreadId = null;
+  const ok = await runTask({ text, statusTarget: statusEl, button: submitBtn });
+  if (ok) taskInput.value = '';
+});
+
+replyBtn.addEventListener('click', async () => {
+  const text = replyInput.value.trim();
+  if (!text || !currentThreadId) return;
+  await runTask({
+    text,
+    threadId: currentThreadId,
+    statusTarget: replyStatus,
+    button: replyBtn
+  });
 });
 
 loadAgents();

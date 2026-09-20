@@ -36,6 +36,44 @@ Past notes are quoted in as reference material, and the agent is told not to fol
 instructions found inside them — a note's body is model output, so it shouldn't be trusted
 as a source of commands.
 
+## Saying something back
+
+A first draft is rarely the one you send, so under each result there's a reply box. Say
+*make it shorter* and the same agent picks up where it left off rather than starting cold.
+
+The CLI is still one-shot — `claude -p`, nothing resumed, no session left on disk. The
+conversation lives in the server's memory, and each turn the server composes the transcript
+into the message it sends. That's the whole mechanism, and it buys three things:
+
+- **The brief is composed once.** Routing, your personal layer and the past-notes lookup all
+  happen on turn 1. Later turns reuse that same system prompt instead of re-running a
+  retrieval against a reply like "shorter".
+- **Tool output never enters the transcript.** The server only ever sees an agent's final
+  text, so a page a connector fetched can't be replayed into the next turn. An injection is
+  bounded to the one CLI run that fetched it.
+- **The thread can't be forged.** The browser holds an id, not the history. A client can't
+  invent something the agent supposedly said.
+
+A conversation is **one note**, not one per turn. The latest reply is the `## Result` —
+that's the deliverable — and the turns before it are kept underneath as `## Thread`, so the
+note records how the result was arrived at. Rating the note rates the conversation, and a new
+turn clears a verdict you filed earlier, since it was a judgement on text that's now been
+replaced. A correction you typed is never cleared.
+
+Two limits worth knowing:
+
+- Threads are in memory. Restart the server and open conversations are gone — the notes stay,
+  but you start a new task rather than adding to an old one. Replying to a thread the server
+  has forgotten fails with that message rather than quietly starting over as a fresh task.
+- Each turn resends the conversation, so a long one is trimmed to roughly 8,000 characters:
+  the opening exchange is kept as the anchor, the most recent turns as the live thread, and
+  the middle is dropped with a line saying so. The *note* still holds everything — trimming
+  is about what the agent is sent, not what gets written down.
+
+**Researcher doesn't get a reply box.** A networked agent stays one-shot, for the same reason
+it gets no personal layer and no past notes: a thread is a context window that grows, and
+that's exactly what shouldn't sit next to a tool that can open sockets.
+
 ## Telling it what was any good
 
 Until you say otherwise, the office treats every past note as equally worth copying — a bad
@@ -163,7 +201,7 @@ should be obvious where the text came from.
 | `prebuilt/` | Shipped agent rulebooks, one JSON file each. No personal detail |
 | `profile.local.json` | Your personal layer. Gitignored, never committed |
 | `public/` | The browser UI |
-| `notes/` | Saved deliverables, one Markdown file per task, plus your verdict on each |
+| `notes/` | Saved deliverables, one Markdown file per task or conversation, plus your verdict on each |
 
 ## Connectors (optional)
 
@@ -275,8 +313,9 @@ Environment variables, all optional:
 | `PORT` | `4521` | Port to listen on (localhost only) |
 | `ROUTER_MODEL` | `haiku` | Model used for the Auto routing call |
 
-How many notes get pulled into a brief, how much of each is quoted, and how strong the
-keyword match has to be are constants at the top of `server.mjs`.
+How many notes get pulled into a brief, how much of each is quoted, how strong the keyword
+match has to be, and how much conversation is replayed on a later turn are constants at the
+top of `server.mjs`.
 
 ## What's next (not built yet)
 

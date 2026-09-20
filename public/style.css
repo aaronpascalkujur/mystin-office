@@ -101,3 +101,18 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 .verdict-tag.kept { color: var(--accent); border-color: var(--accent); }
 .verdict-tag.discarded { opacity: 0.6; text-decoration: line-through; }
+
+#transcript { display: flex; flex-direction: column; gap: 0.9rem; margin: 0.5rem 0 0.75rem; }
+.turn { display: flex; flex-direction: column; gap: 0.15rem; }
+.turn-who { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.turn pre { white-space: pre-wrap; font-family: inherit; margin: 0; line-height: 1.5; }
+.turn.user pre {
+  color: var(--muted);
+  border-left: 2px solid var(--border);
+  padding-left: 0.7rem;
+}
+
+.reply { margin: 0.25rem 0 1rem; }
+.reply label { margin-top: 0; }
+.reply button { margin-top: 0.5rem; padding: 0.4rem 0.9rem; font-size: 0.85rem; }
+.reply-status { color: var(--muted); font-size: 0.8rem; margin-left: 0.5rem; }
