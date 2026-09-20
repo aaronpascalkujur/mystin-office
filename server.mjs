@@ -26,6 +26,15 @@ const NOTE_QUOTE_CHARS = 1200;
 // A task shares at least this many keywords with a note before it counts as
 // related — without a floor, every task drags in the newest unrelated notes.
 const MIN_KEYWORD_OVERLAP = 2;
+// Your verdict on what an agent produced, filed once you have actually used it.
+// Three buckets rather than a score: you already know whether you shipped it,
+// fixed it, or binned it, and a 4-out-of-5 from Writer would not mean the same
+// as a 4-out-of-5 from Coder.
+const VERDICTS = new Set(['kept', 'edited', 'discarded']);
+// How far a note you vouched for outranks one you never looked at. A starting
+// guess, not a measurement — worth revisiting once enough notes carry verdicts
+// to compare the two settings against each other.
+const VERDICT_BONUS = 0.2;
 // Routing is a throwaway one-word answer, so it defaults to a small fast model.
 const ROUTER_MODEL = process.env.ROUTER_MODEL || 'haiku';
 // The only fields a prebuilt agent may carry. An allowlist rather than a list of
@@ -265,6 +274,17 @@ function assertNoThirdPartyNetwork(agents, connectors) {
   }
 }
 
+// The guard every write endpoint runs. One function rather than a copy per
+// route, so adding a route later can't quietly ship without it: a page on
+// another site can't post here, and a form submission can't reach here either,
+// since browsers won't send application/json cross-origin without a preflight.
+function postAllowed(req) {
+  const origin = req.headers.origin;
+  const contentType = req.headers['content-type'] || '';
+  if (origin && !ALLOWED_ORIGINS.has(origin)) return false;
+  return contentType.startsWith('application/json');
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -403,35 +423,58 @@ function slugify(text) {
     .slice(0, 40) || 'task';
 }
 
+// The single place a note's layout is decided. A note gets rewritten when you
+// file a verdict on it, so rendering and parsing have to round-trip exactly —
+// two builders that drift apart would quietly corrupt the archive.
+function renderNote(note) {
+  const lines = [
+    '---',
+    `agent: ${note.agent}`,
+    `agentId: ${note.agentId}`,
+    `date: ${note.date}`,
+    // Recorded so you can tell after the fact which deliverables were produced
+    // by an agent that had tool access. Spread rather than a '' placeholder:
+    // the blank strings further down are load-bearing for the note format.
+    ...(note.connectors?.length ? [`connectors: ${note.connectors.join(', ')}`] : []),
+    // Marks a note whose task may contain text someone else wrote. findRelatedNotes
+    // can pull this note into a different agent's brief later, so it should be
+    // obvious then where the text came from.
+    ...(note.thirdPartyContent ? ['thirdPartyContent: true'] : []),
+    // Your verdict, filed later: kept, edited, or discarded. Absent until you
+    // give one, and absent is the neutral case everywhere downstream.
+    ...(note.verdict ? [`verdict: ${note.verdict}`] : []),
+    ...(note.verdictDate ? [`verdictDate: ${note.verdictDate}`] : []),
+    '---',
+    '',
+    `## Task`,
+    '',
+    note.task,
+    '',
+    `## Result`,
+    '',
+    note.result.trim(),
+    ''
+  ];
+  // What you actually shipped, when it differed. Kept beside the result rather
+  // than replacing it: the pair is the signal, and half of it is worth nothing.
+  if (note.correction) lines.push(`## Correction`, '', note.correction.trim(), '');
+  return lines.join('\n');
+}
+
 async function saveNote({ agent, task, result, connectors = [], thirdPartyContent = false }) {
   await fs.mkdir(NOTES_DIR, { recursive: true });
   const now = new Date();
   const stamp = now.toISOString().replace(/[:.]/g, '-');
   const filename = `${stamp}--${agent.id}--${slugify(task)}.md`;
-  const body = [
-    '---',
-    `agent: ${agent.name}`,
-    `agentId: ${agent.id}`,
-    `date: ${now.toISOString()}`,
-    // Recorded so you can tell after the fact which deliverables were produced
-    // by an agent that had tool access. Spread rather than a '' placeholder:
-    // the blank strings further down are load-bearing for the note format.
-    ...(connectors.length ? [`connectors: ${connectors.join(', ')}`] : []),
-    // Marks a note whose task may contain text someone else wrote. findRelatedNotes
-    // can pull this note into a different agent's brief later, so it should be
-    // obvious then where the text came from.
-    ...(thirdPartyContent ? ['thirdPartyContent: true'] : []),
-    '---',
-    '',
-    `## Task`,
-    '',
+  const body = renderNote({
+    agent: agent.name,
+    agentId: agent.id,
+    date: now.toISOString(),
+    connectors,
+    thirdPartyContent,
     task,
-    '',
-    `## Result`,
-    '',
-    result.trim(),
-    ''
-  ].join('\n');
+    result
+  });
   await fs.writeFile(path.join(NOTES_DIR, filename), body, 'utf-8');
   return filename;
 }
@@ -440,16 +483,52 @@ function parseNote(file, raw) {
   const agentMatch = raw.match(/^agent: (.*)$/m);
   const agentIdMatch = raw.match(/^agentId: (.*)$/m);
   const dateMatch = raw.match(/^date: (.*)$/m);
+  const connectorsMatch = raw.match(/^connectors: (.*)$/m);
+  const verdictMatch = raw.match(/^verdict: (.*)$/m);
+  const verdictDateMatch = raw.match(/^verdictDate: (.*)$/m);
   const taskMatch = raw.match(/## Task\n\n([\s\S]*?)\n\n## Result/);
-  const resultMatch = raw.match(/## Result\n\n([\s\S]*)$/);
+  // Stops at a correction if there is one, so re-rendering can't fold the
+  // correction back into the result and lose the distinction between them.
+  const resultMatch = raw.match(/## Result\n\n([\s\S]*?)(?:\n## Correction\n|$)/);
+  const correctionMatch = raw.match(/## Correction\n\n([\s\S]*)$/);
   return {
     file,
     agent: agentMatch ? agentMatch[1] : '',
     agentId: agentIdMatch ? agentIdMatch[1] : '',
     date: dateMatch ? dateMatch[1] : '',
+    connectors: connectorsMatch ? connectorsMatch[1].split(',').map((c) => c.trim()).filter(Boolean) : [],
+    thirdPartyContent: /^thirdPartyContent: true$/m.test(raw),
+    verdict: verdictMatch ? verdictMatch[1].trim() : '',
+    verdictDate: verdictDateMatch ? verdictDateMatch[1].trim() : '',
     task: taskMatch ? taskMatch[1].trim() : '',
-    result: resultMatch ? resultMatch[1].trim() : ''
+    result: resultMatch ? resultMatch[1].trim() : '',
+    correction: correctionMatch ? correctionMatch[1].trim() : ''
   };
+}
+
+// A note filename arrives from the browser, so it is never treated as a path.
+// It has to appear in the directory listing as an exact string — an allowlist,
+// not an attempt to spot bad characters — and the path it joins to has to still
+// sit directly in notes/ afterwards. Both checks, because either one alone has
+// been somebody's traversal bug before.
+async function applyVerdict({ file, verdict, correction }) {
+  if (!VERDICTS.has(verdict)) {
+    throw new Error(`verdict must be one of: ${[...VERDICTS].join(', ')}`);
+  }
+  await fs.mkdir(NOTES_DIR, { recursive: true });
+  const files = (await fs.readdir(NOTES_DIR)).filter((f) => f.endsWith('.md'));
+  const full = path.join(NOTES_DIR, file);
+  if (!files.includes(file) || path.dirname(full) !== NOTES_DIR) {
+    throw new Error(`no such note: ${file}`);
+  }
+  const note = parseNote(file, await fs.readFile(full, 'utf-8'));
+  note.verdict = verdict;
+  note.verdictDate = new Date().toISOString();
+  // Only touched when a correction was actually sent, so re-rating a note from
+  // the list can't wipe the corrected text you typed into the result panel.
+  if (typeof correction === 'string') note.correction = correction.trim();
+  await fs.writeFile(full, renderNote(note), 'utf-8');
+  return note;
 }
 
 // Newest notes first. Filenames start with an ISO timestamp, so a reverse sort
@@ -469,7 +548,16 @@ async function readNotes() {
 
 async function listNotes() {
   const notes = await readNotes();
-  return notes.map(({ file, agent, date, task }) => ({ file, agent, date, task }));
+  return notes.map(({ file, agent, date, task, verdict, correction }) => ({
+    file,
+    agent,
+    date,
+    task,
+    verdict,
+    // The correction itself can be long, and the list only needs to show that
+    // one exists. The full text stays in the note.
+    hasCorrection: Boolean(correction)
+  }));
 }
 
 const STOPWORDS = new Set([
@@ -485,18 +573,29 @@ function keywords(text) {
 }
 
 // Scores a note against the task by keyword overlap, with a nudge toward notes
-// the same agent wrote. Notes below MIN_KEYWORD_OVERLAP are dropped entirely.
+// the same agent wrote and toward work you vouched for. Notes below
+// MIN_KEYWORD_OVERLAP are dropped entirely.
 function findRelatedNotes(task, agent, notes) {
   const taskWords = keywords(task);
   if (!taskWords.size) return [];
   const scored = [];
   for (const note of notes) {
-    const noteWords = keywords(`${note.task} ${note.result}`);
+    // Work you threw away has no business shaping the next brief. Dropped
+    // outright rather than down-weighted: there is no score low enough to make
+    // quoting a rejected draft a good idea.
+    if (note.verdict === 'discarded') continue;
+    // Matched against whichever text would actually be quoted, so a note can't
+    // win on keywords that only appear in the version you replaced.
+    const noteWords = keywords(`${note.task} ${note.correction || note.result}`);
     let overlap = 0;
     for (const word of taskWords) if (noteWords.has(word)) overlap++;
     if (overlap < MIN_KEYWORD_OVERLAP) continue;
     const sameAgent = note.agentId === agent.id ? 0.15 : 0;
-    scored.push({ note, score: overlap / taskWords.size + sameAgent });
+    // Kept work, or work you took the trouble to correct, outranks work you
+    // never looked at. An unrated note scores exactly as it did before verdicts
+    // existed, so the archive stays useful while you are only rating some of it.
+    const vouched = note.verdict === 'kept' || note.correction ? VERDICT_BONUS : 0;
+    scored.push({ note, score: overlap / taskWords.size + sameAgent + vouched });
   }
   // Ties keep their read order, which is newest first.
   scored.sort((a, b) => b.score - a.score);
@@ -515,7 +614,13 @@ function buildNotesBrief(notes) {
     `--- ${n.file}`,
     `Agent: ${n.agent} | Date: ${n.date}`,
     `Task: ${n.task}`,
-    `Result: ${truncate(n.result, NOTE_QUOTE_CHARS)}`
+    // Where you corrected an agent, the corrected text is what gets quoted: the
+    // brief should carry what was actually used, not what was rejected. Note
+    // that rejected text is never quoted at all, not even labelled as a bad
+    // example — a model drifts toward whatever is in front of it, label or no.
+    n.correction
+      ? `Result (the corrected version that was actually used): ${truncate(n.correction, NOTE_QUOTE_CHARS)}`
+      : `Result: ${truncate(n.result, NOTE_QUOTE_CHARS)}`
   ].join('\n'));
   return [
     'Earlier work from this office that looks related is below. Use it for continuity —',
@@ -576,10 +681,42 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // What you made of what came back. Filed separately from the task that
+    // produced it, because you only know whether something was any good after
+    // you have tried to use it.
+    if (url.pathname === '/api/notes/verdict' && req.method === 'POST') {
+      if (!postAllowed(req)) {
+        sendJSON(res, 403, { error: 'forbidden' });
+        return;
+      }
+      let body;
+      try {
+        body = JSON.parse((await readBody(req)) || '{}');
+      } catch {
+        sendJSON(res, 400, { error: 'request body must be valid JSON' });
+        return;
+      }
+      try {
+        const note = await applyVerdict({
+          file: typeof body.file === 'string' ? body.file : '',
+          verdict: typeof body.verdict === 'string' ? body.verdict : '',
+          // Left undefined when absent, so an omitted field means "leave the
+          // correction alone" and an empty string means "clear it".
+          correction: typeof body.correction === 'string' ? body.correction : undefined
+        });
+        sendJSON(res, 200, {
+          file: note.file,
+          verdict: note.verdict,
+          hasCorrection: Boolean(note.correction)
+        });
+      } catch (err) {
+        sendJSON(res, 400, { error: err.message });
+      }
+      return;
+    }
+
     if (url.pathname === '/api/task' && req.method === 'POST') {
-      const origin = req.headers.origin;
-      const contentType = req.headers['content-type'] || '';
-      if ((origin && !ALLOWED_ORIGINS.has(origin)) || !contentType.startsWith('application/json')) {
+      if (!postAllowed(req)) {
         sendJSON(res, 403, { error: 'forbidden' });
         return;
       }

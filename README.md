@@ -36,6 +36,38 @@ Past notes are quoted in as reference material, and the agent is told not to fol
 instructions found inside them — a note's body is model output, so it shouldn't be trusted
 as a source of commands.
 
+## Telling it what was any good
+
+Until you say otherwise, the office treats every past note as equally worth copying — a bad
+draft gets quoted into the next brief as eagerly as a good one. So under each result there
+are three buttons: **used it as-is**, **fixed it up**, **threw it away**. The verdict is
+written into the note's own frontmatter, and you can rate older work from the notes list too.
+
+What it changes:
+
+- A **discarded** note is never quoted again. Dropped outright rather than ranked lower —
+  and deliberately not shown to an agent as a labelled bad example either, since a model
+  drifts toward whatever text is in front of it whatever the caption says.
+- A **kept** note, or one you corrected, outranks work you never looked at.
+- An **unrated** note scores exactly as it did before any of this existed. That's the point:
+  you can rate three notes out of forty and the other thirty-seven still work normally.
+
+On **fixed it up** you can paste what you actually sent. That text goes into a `## Correction`
+section *beside* the result, never over it — the original stays as the record of what the
+agent produced, and the pair is the useful part. From then on the brief quotes your version
+rather than the draft, so a correction is a positive example, not a scolding.
+
+Corrections are text you wrote, so they can hold detail you'd never publish. `notes/*.md` is
+gitignored, which is why this is safe by default.
+
+One asymmetry worth knowing: Researcher is networked, so it's given no past notes at all (see
+[Reading the web](#reading-the-web)). Rating its work builds a record you can read, but not
+one Researcher will ever benefit from. The other agents do.
+
+Nothing here rewrites a brief or trains anything. It only changes which past work gets
+quoted, and that's deliberate — the record has to be worth something before anything
+automatic should read it.
+
 ## Make it yours
 
 Edit `agents.json` — each agent is:
@@ -126,12 +158,12 @@ should be obvious where the text came from.
 
 | Path | What |
 |---|---|
-| `server.mjs` | The whole server: static files, `/api/agents`, `/api/task`, `/api/notes`, the Claude CLI call |
+| `server.mjs` | The whole server: static files, `/api/agents`, `/api/task`, `/api/notes`, `/api/notes/verdict`, the Claude CLI call |
 | `agents.json` | The roster: your agents, which prebuilt ones are on, connector definitions |
 | `prebuilt/` | Shipped agent rulebooks, one JSON file each. No personal detail |
 | `profile.local.json` | Your personal layer. Gitignored, never committed |
 | `public/` | The browser UI |
-| `notes/` | Saved deliverables, one Markdown file per task |
+| `notes/` | Saved deliverables, one Markdown file per task, plus your verdict on each |
 
 ## Connectors (optional)
 
