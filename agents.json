@@ -11,6 +11,14 @@
       ]
     }
   },
+  "placements": {
+    "planner": { "department": "Operations" },
+    "writer": { "department": "Content", "reportsTo": "planner" },
+    "linkedin": { "department": "Content", "reportsTo": "writer" },
+    "researcher": { "department": "Research", "reportsTo": "planner" },
+    "analyst": { "department": "Research", "reportsTo": "researcher" },
+    "coder": { "department": "Engineering", "reportsTo": "planner" }
+  },
   "agents": [
     {
       "id": "writer",

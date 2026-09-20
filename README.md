@@ -153,7 +153,41 @@ Edit `agents.json` — each agent is:
 `id` must be unique, and can't be `auto` — that one is reserved for automatic routing. The
 first agent in the list is the fallback when routing can't decide.
 
-Add, remove, or rewrite agents freely — restart the server to pick up changes.
+Add, remove, or rewrite agents freely. `agents.json` is read fresh on every request, so a
+change is live as soon as you save it — reload the page to see it.
+
+## Who sits where
+
+The roster is a list; an office is a floor plan. `placements` is the org chart, a separate
+block in `agents.json` keyed by agent id:
+
+```json
+"placements": {
+  "planner": { "department": "Operations" },
+  "writer":  { "department": "Content", "reportsTo": "planner" }
+}
+```
+
+Both fields are optional. `department` is any string you like — the departments are whatever
+you name, not a fixed set. `reportsTo` is another agent's id; leaving it out puts that agent
+at the top, and you can have as many agents at the top as you want. An agent with no
+placement at all is simply unplaced.
+
+It's a separate block rather than two more fields on each agent because prebuilt agents need
+placing too, and their files are shipped in the repo for anyone to use. Which department
+*you* dropped the LinkedIn agent into isn't part of that shared agent — it's part of your
+office. One map keeps both kinds of agent placed the same way.
+
+Right now this is **description only**. It changes nothing about how the office behaves: the
+routing fallback is still whoever is first in `agents.json`, not whoever is top of the chart,
+and no agent is told who its manager is. It's the data the office floor will be drawn from,
+and the thing a manager could later actually *do* something with.
+
+What the server won't accept, because each one would silently draw the wrong picture:
+
+- A placement for an agent who isn't in the roster, or a `reportsTo` naming one who isn't.
+- An agent reporting to itself, or any reporting loop — someone has to be at the top.
+- A field other than `department` and `reportsTo`, so one invented later can't arrive unnoticed.
 
 ## Prebuilt agents
 
@@ -224,7 +258,7 @@ should be obvious where the text came from.
 | Path | What |
 |---|---|
 | `server.mjs` | The whole server: static files, `/api/agents`, `/api/task`, `/api/notes`, `/api/notes/verdict`, the Claude CLI call |
-| `agents.json` | The roster: your agents, which prebuilt ones are on, connector definitions |
+| `agents.json` | The roster: your agents, which prebuilt ones are on, the org chart, connector definitions |
 | `prebuilt/` | Shipped agent rulebooks, one JSON file each. No personal detail |
 | `profile.local.json` | Your personal layer. Gitignored, never committed |
 | `public/` | The browser UI |
@@ -345,6 +379,13 @@ match has to be, and how much conversation is replayed on a later turn are const
 top of `server.mjs`.
 
 ## What's next (not built yet)
+
+An office floor: the roster drawn as departments and desks instead of a dropdown, with each
+agent visible at its own desk and lit up while it's working. `placements` above is the data
+that page will be built from.
+
+A hierarchy that does something — a manager that can hand a piece of its work to someone
+below it, rather than an org chart that only describes.
 
 Scheduled and recurring tasks — a standing brief that runs on its own each morning instead of
 waiting for you to type it.
