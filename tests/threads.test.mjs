@@ -127,6 +127,11 @@ test('the first turn sends the task and nothing else', async () => {
   assert.equal(input.trim(), text);
   assert.ok(body.threadId, 'a non-networked agent should open a thread');
   assert.equal(body.turn, 1);
+  // The id as well as the name, because the floor ties a result back to a desk
+  // and names are not unique. On a reply the browser has nothing else to go on:
+  // an auto-routed thread belongs to an agent it never picked.
+  assert.equal(body.agentId, 'writer');
+  assert.equal(body.agent, 'Writer');
 });
 
 test('a reply replays the conversation and reuses the same brief', async () => {

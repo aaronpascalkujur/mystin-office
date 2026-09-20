@@ -1,4 +1,5 @@
-const agentSelect = document.getElementById('agent-select');
+const floor = document.getElementById('floor');
+const chosenAgent = document.getElementById('chosen-agent');
 const taskInput = document.getElementById('task-input');
 const submitBtn = document.getElementById('submit-btn');
 const statusEl = document.getElementById('status');
@@ -28,6 +29,17 @@ let currentFile = null;
 let currentThreadId = null;
 let currentAgentName = '';
 let currentTurns = [];
+// Who is handling the open conversation. Taken from the response rather than
+// from the desk that was clicked, because an auto-routed task is handled by
+// somebody the browser never picked.
+let currentAgentId = null;
+
+// The desk you have picked. 'auto' is the front desk, which is the server's
+// sentinel for "route it" as well as the reception tile's id on the floor.
+const RECEPTION = 'auto';
+// Where agents with no placement sit. Not a department, so it is drawn last.
+const UNPLACED = 'Unassigned';
+let selectedAgentId = RECEPTION;
 
 // Built as DOM nodes rather than innerHTML: every turn is either text a stranger
 // might have written or text a model produced, and neither belongs in markup.
@@ -47,12 +59,143 @@ function renderTranscript() {
 }
 
 async function loadAgents() {
-  const agents = await (await fetch('/api/agents')).json();
-  const auto = '<option value="auto" title="Let the office decide who takes it">Auto — pick the best fit</option>';
-  agentSelect.innerHTML = auto + agents
-    .map((a) => `<option value="${a.id}" title="${escapeHtml(a.does)}">${a.name} — ${a.role}</option>`)
-    .join('');
+  renderFloor(await (await fetch('/api/agents')).json());
 }
+
+// Departments in the order the roster first mentions them, so the floor is
+// arranged by editing agents.json and nothing else. Agents with no placement
+// are a loose end rather than a department, so they go last whatever the order.
+function groupIntoRooms(agents) {
+  const rooms = new Map();
+  for (const agent of agents) {
+    const name = agent.department || UNPLACED;
+    if (!rooms.has(name)) rooms.set(name, []);
+    rooms.get(name).push(agent);
+  }
+  const unplaced = rooms.get(UNPLACED);
+  if (unplaced && rooms.size > 1) {
+    rooms.delete(UNPLACED);
+    rooms.set(UNPLACED, unplaced);
+  }
+  return [...rooms];
+}
+
+// Desks are buttons so the floor works from a keyboard, and are built as nodes
+// rather than markup for the same reason the transcript is: every string here
+// was authored somewhere else, in agents.json or in a shipped prebuilt file.
+function makeDesk({ id, name, role, does, reportsTo }, byId) {
+  const desk = document.createElement('button');
+  desk.type = 'button';
+  desk.className = 'desk';
+  desk.dataset.agent = id;
+  if (does) desk.title = does;
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'desk-name';
+  nameEl.textContent = name;
+
+  const roleEl = document.createElement('span');
+  roleEl.className = 'desk-role';
+  roleEl.textContent = role;
+  desk.append(nameEl, roleEl);
+
+  // The reporting line is written on the desk instead of drawn as position,
+  // because the two structures disagree: an agent can sit in one department and
+  // report into another, and a layout cannot show both at once.
+  const boss = reportsTo && byId.get(reportsTo);
+  if (boss) {
+    const reportsEl = document.createElement('span');
+    reportsEl.className = 'desk-reports';
+    reportsEl.textContent = `reports to ${boss.name}`;
+    desk.dataset.reportsTo = boss.id;
+    desk.append(reportsEl);
+  }
+  return desk;
+}
+
+function makeReception() {
+  const desk = document.createElement('button');
+  desk.type = 'button';
+  desk.className = 'desk reception';
+  desk.dataset.agent = RECEPTION;
+  desk.title = 'Let the office decide who takes it';
+  const name = document.createElement('span');
+  name.className = 'desk-name';
+  name.textContent = 'Front desk';
+  const role = document.createElement('span');
+  role.className = 'desk-role';
+  role.textContent = 'Hands it to whoever fits best';
+  desk.append(name, role);
+  return desk;
+}
+
+function renderFloor(agents) {
+  const byId = new Map(agents.map((a) => [a.id, a]));
+  const rooms = document.createElement('div');
+  rooms.className = 'rooms';
+  for (const [department, members] of groupIntoRooms(agents)) {
+    const room = document.createElement('div');
+    room.className = 'room';
+    const label = document.createElement('div');
+    label.className = 'room-name';
+    label.textContent = department;
+    const desks = document.createElement('div');
+    desks.className = 'desks';
+    desks.append(...members.map((a) => makeDesk(a, byId)));
+    room.append(label, desks);
+    rooms.append(room);
+  }
+  floor.replaceChildren(makeReception(), rooms);
+  // A roster can lose the agent you had picked, since agents.json is re-read on
+  // every request. Falling back to the front desk beats posting a stale id.
+  if (selectedAgentId !== RECEPTION && !byId.has(selectedAgentId)) {
+    selectedAgentId = RECEPTION;
+  }
+  drawSelection();
+}
+
+function drawSelection() {
+  let picked = 'the front desk';
+  for (const desk of floor.querySelectorAll('.desk')) {
+    const chosen = desk.dataset.agent === selectedAgentId;
+    desk.classList.toggle('chosen', chosen);
+    desk.setAttribute('aria-pressed', String(chosen));
+    if (chosen && desk.dataset.agent !== RECEPTION) {
+      picked = desk.querySelector('.desk-name').textContent;
+    }
+  }
+  chosenAgent.textContent = `Going to: ${picked}`;
+}
+
+// Lights one desk, or clears the floor when given null. The front desk lights
+// for an unrouted task because that is honestly what is happening: nobody has
+// been chosen yet.
+function setBusy(agentId) {
+  for (const desk of floor.querySelectorAll('.desk')) {
+    desk.classList.toggle('busy', Boolean(agentId) && desk.dataset.agent === agentId);
+  }
+}
+
+function highlightManager(agentId) {
+  for (const desk of floor.querySelectorAll('.desk')) {
+    desk.classList.toggle('is-manager', Boolean(agentId) && desk.dataset.agent === agentId);
+  }
+}
+
+const managerOf = (target) => target.closest?.('.desk')?.dataset.reportsTo || null;
+
+floor.addEventListener('click', (event) => {
+  const desk = event.target.closest('.desk');
+  if (!desk) return;
+  selectedAgentId = desk.dataset.agent;
+  drawSelection();
+});
+
+// Pointing at or tabbing to a desk shows you who that agent answers to.
+floor.addEventListener('mouseover', (event) => highlightManager(managerOf(event.target)));
+floor.addEventListener('mouseleave', () => highlightManager(null));
+floor.addEventListener('focusin', (event) => highlightManager(managerOf(event.target)));
+floor.addEventListener('focusout', () => highlightManager(null));
 
 async function loadNotes() {
   const notes = await (await fetch('/api/notes')).json();
@@ -149,9 +292,12 @@ notesList.addEventListener('click', async (event) => {
 async function runTask({ text, threadId, statusTarget, button }) {
   button.disabled = true;
   statusTarget.textContent = 'Working…';
+  // A reply goes to whoever owns the thread, which is not necessarily the desk
+  // still highlighted — the first turn may have been routed.
+  setBusy(threadId ? currentAgentId : selectedAgentId);
 
   try {
-    const body = threadId ? { threadId, text } : { agentId: agentSelect.value, text };
+    const body = threadId ? { threadId, text } : { agentId: selectedAgentId, text };
     const res = await fetch('/api/task', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -164,6 +310,7 @@ async function runTask({ text, threadId, statusTarget, button }) {
       currentTurns.push({ role: 'user', text }, { role: 'agent', text: data.result });
     } else {
       currentAgentName = data.agent;
+      currentAgentId = data.agentId;
       currentTurns = [{ role: 'user', text }, { role: 'agent', text: data.result }];
       resultAgent.textContent = data.routed ? `${data.agent} picked this up` : data.agent;
     }
@@ -205,6 +352,10 @@ async function runTask({ text, threadId, statusTarget, button }) {
     return false;
   } finally {
     button.disabled = false;
+    // Nobody is working once the answer is back. The desk is not left lit to
+    // show who answered — the result panel already says that, and a glowing
+    // desk would claim work still in progress.
+    setBusy(null);
   }
 }
 
