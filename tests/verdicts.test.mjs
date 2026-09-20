@@ -67,12 +67,15 @@ async function post(pathname, body, headers = {}) {
 }
 
 // Runs a task through the stub and hands back the system prompt the agent got.
+//
+// Cleanup claims the exact filename the API returned rather than diffing the
+// directory. Test files run in parallel and share notes/, so a diff would let
+// this file's cleanup adopt — and then delete — another file's note.
 async function promptFor(text) {
   await fs.writeFile(promptFile, '', 'utf-8');
-  const before = new Set(await fs.readdir(NOTES_DIR));
   const res = await post('/api/task', { agentId: 'writer', text });
   assert.equal(res.status, 200, `task failed: ${JSON.stringify(res.body)}`);
-  for (const f of await fs.readdir(NOTES_DIR)) if (!before.has(f)) created.add(f);
+  if (res.body?.file) created.add(res.body.file);
   return fs.readFile(promptFile, 'utf-8');
 }
 
