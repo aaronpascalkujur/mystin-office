@@ -71,6 +71,9 @@ button:disabled { opacity: 0.6; cursor: default; }
 #notes-list .empty { color: var(--muted); }
 
 .verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.9rem; }
+/* A display rule outranks the hidden attribute, so say it again for the ones
+   that get toggled. */
+.verdict[hidden] { display: none; }
 .verdict-label { color: var(--muted); font-size: 0.8rem; margin-right: 0.2rem; }
 .verdict-status { color: var(--muted); font-size: 0.8rem; margin-left: 0.3rem; }
 

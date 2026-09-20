@@ -112,6 +112,27 @@ Nothing here rewrites a brief or trains anything. It only changes which past wor
 quoted, and that's deliberate — the record has to be worth something before anything
 automatic should read it.
 
+## Tidying the archive
+
+`notes/` is a plain folder of Markdown files and it's meant to be tidied. Delete anything in
+it, with `rm` or your file manager, at any time — including while the office is running.
+Nothing indexes it and nothing caches it; every task reads the directory fresh.
+
+A deleted note is simply never quoted into a brief again. That's the difference from **threw
+it away**: a `discarded` note stays on disk and stays readable, it just stops being quoted.
+Deleting takes the record with it. Use the verdict when you want to remember that something
+didn't work, and delete when you'd rather it weren't written down at all.
+
+Two things happen if you delete at an awkward moment, both on purpose:
+
+- A note that vanishes while a task is composing its brief is skipped, and the task carries on.
+  Only a missing file is forgiven — a permissions or I/O error still fails loudly, rather than
+  quietly handing the agent less to work with than you think it has.
+- A note that vanishes while its conversation is still open **ends that conversation**. You're
+  told so, and you start a new task. The note is deliberately not written back from the turns
+  still held in memory: you may have deleted it precisely because of what was in it, and
+  restoring it behind your back would undo that.
+
 ## Make it yours
 
 Edit `agents.json` — each agent is:
