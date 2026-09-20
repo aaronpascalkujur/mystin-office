@@ -26,7 +26,15 @@
 
     <section class="result-panel" id="result-panel" hidden>
       <h2 id="result-agent"></h2>
-      <pre id="result-text"></pre>
+      <div id="transcript"></div>
+
+      <div class="reply" id="reply-box" hidden>
+        <label for="reply-input">Say something back</label>
+        <textarea id="reply-input" rows="3" placeholder="e.g. Make it shorter and drop the last line."></textarea>
+        <button type="button" id="reply-btn">Reply</button>
+        <span class="reply-status" id="reply-status"></span>
+      </div>
+
       <p class="note-path">Saved to <code id="result-file"></code></p>
       <p class="used-notes" id="result-notes" hidden></p>
 
