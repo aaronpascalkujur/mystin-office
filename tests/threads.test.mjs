@@ -188,12 +188,15 @@ test('an unknown thread id is refused rather than silently starting over', async
 test('a long conversation drops the middle and keeps the opening', async () => {
   const filler = 'x'.repeat(3000);
   const first = await send({ agentId: 'writer', text: `OPENER-MARKER ${filler}` });
+  assert.equal(first.status, 200, `opening turn failed: ${JSON.stringify(first.body)}`);
   const id = first.body.threadId;
-  await send({ threadId: id, text: `MIDDLE-MARKER ${filler}` });
-  await send({ threadId: id, text: `THIRD-MARKER ${filler}` });
+  const mid = await send({ threadId: id, text: `MIDDLE-MARKER ${filler}` });
+  assert.equal(mid.status, 200, `second turn failed: ${JSON.stringify(mid.body)}`);
+  const third = await send({ threadId: id, text: `THIRD-MARKER ${filler}` });
+  assert.equal(third.status, 200, `third turn failed: ${JSON.stringify(third.body)}`);
   const last = await send({ threadId: id, text: 'and finally, wrap it up' });
 
-  assert.equal(last.status, 200);
+  assert.equal(last.status, 200, `final turn failed: ${JSON.stringify(last.body)}`);
   assert.ok(last.input.length < THREAD_CHARS * 2, 'the replayed conversation should be bounded');
   assert.match(last.input, /OPENER-MARKER/, 'the opening turn anchors the task');
   assert.match(last.input, /THIRD-MARKER/, 'the most recent turns are the live conversation');

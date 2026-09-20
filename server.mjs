@@ -649,7 +649,17 @@ async function readNotes() {
   files.sort().reverse();
   const notes = [];
   for (const file of files.slice(0, NOTES_SCANNED)) {
-    const raw = await fs.readFile(path.join(NOTES_DIR, file), 'utf-8');
+    let raw;
+    try {
+      raw = await fs.readFile(path.join(NOTES_DIR, file), 'utf-8');
+    } catch (err) {
+      // The directory listing is a snapshot, and notes/ is a folder you are
+      // meant to tidy. Deleting one while a task happens to be composing its
+      // brief should not fail the task. Only a vanished file is tolerated —
+      // a permissions or I/O error still surfaces rather than being swallowed.
+      if (err.code === 'ENOENT') continue;
+      throw err;
+    }
     notes.push(parseNote(file, raw));
   }
   return notes;

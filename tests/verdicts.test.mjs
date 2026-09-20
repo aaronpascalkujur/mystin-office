@@ -202,6 +202,25 @@ test('refuses a cross-site post', async () => {
   assert.equal(res.status, 403);
 });
 
+// notes/ is a folder the user is invited to tidy, and reading it is one
+// directory listing followed by a series of reads. A note deleted in that window
+// used to take the whole task down with an ENOENT. It found this suite first:
+// three test files share notes/, and one file's cleanup would occasionally
+// delete a note another file's server was mid-read on — about one run in eight.
+//
+// A dangling symlink pins that down deterministically. readdir lists it, and
+// reading it fails with exactly the ENOENT a half-deleted note gives, with no
+// timing to lose. Racing real deletes against the read reproduced the bug only
+// sometimes, which would have made this a flaky test for a flaky bug.
+test('a note that cannot be read does not take the task down', async () => {
+  const file = '2099-01-01T00-00-00-000Z--writer--vanished.md';
+  await fs.symlink(path.join(NOTES_DIR, 'no-such-target.md'), path.join(NOTES_DIR, file));
+  created.add(file);
+  // Throws if the task 500s, which is the whole assertion.
+  const prompt = await promptFor('write something about widgets');
+  assert.ok(prompt.length > 0);
+});
+
 // The two tests the whole layer exists for.
 
 test('a discarded note is never quoted into a later brief', async () => {
