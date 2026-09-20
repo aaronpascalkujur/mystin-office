@@ -50,6 +50,12 @@ const PREBUILT_FIELDS = new Set([
   'id', 'name', 'role', 'does', 'brief', 'model', 'handlesThirdPartyContent', 'connectors'
 ]);
 const PREBUILT_ID = /^[a-z0-9][a-z0-9-]*$/;
+// The only fields a placement may carry. Where you sat an agent is yours, not
+// the agent's: a prebuilt agent is shipped craft and "which department I put it
+// in" is not craft, so placement cannot live on the agent record. One map for
+// everyone rather than a field on your own agents and a map for prebuilt ones,
+// so there is a single place to read the org chart off.
+const PLACEMENT_FIELDS = new Set(['department', 'reportsTo']);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -69,7 +75,76 @@ async function loadConfig() {
   const agents = [...own, ...(await loadPrebuiltAgents(parsed.prebuilt || [], own))];
   const connectors = parsed.connectors || {};
   assertNoThirdPartyNetwork(agents, connectors);
+  applyPlacements(agents, parsed.placements || {});
   return { agents, connectors };
+}
+
+// The org chart. Descriptive only: nothing here changes who a task is routed
+// to, what an agent is told, or which notes it reads — agents[0] is still the
+// routing fallback and a manager is not consulted about anything. It says where
+// people sit, so a floor can be drawn from it.
+//
+// Validated rather than trusted, because the failure it prevents is silent: a
+// typo'd reportsTo would draw someone under a manager who does not exist, or
+// under nobody, and look deliberate. loadConfig runs per request, so a bad
+// roster surfaces the moment the page asks for agents, and a fixed one needs no
+// restart.
+function applyPlacements(agents, placements) {
+  if (!placements || typeof placements !== 'object' || Array.isArray(placements)) {
+    throw new Error('"placements" in agents.json must be an object keyed by agent id');
+  }
+  const byId = new Map(agents.map((a) => [a.id, a]));
+  for (const [id, placement] of Object.entries(placements)) {
+    if (!byId.has(id)) {
+      throw new Error(`placements names "${id}", which is not an agent in this roster`);
+    }
+    if (!placement || typeof placement !== 'object' || Array.isArray(placement)) {
+      throw new Error(`placements."${id}" must be an object`);
+    }
+    for (const key of Object.keys(placement)) {
+      if (!PLACEMENT_FIELDS.has(key)) {
+        throw new Error(`placements."${id}" has an unsupported field "${key}"`);
+      }
+    }
+    if ('department' in placement
+      && (typeof placement.department !== 'string' || !placement.department.trim())) {
+      throw new Error(`placements."${id}": "department" must be a non-empty string`);
+    }
+    if ('reportsTo' in placement) {
+      if (placement.reportsTo === id) {
+        throw new Error(`placements."${id}": an agent cannot report to itself`);
+      }
+      if (typeof placement.reportsTo !== 'string' || !byId.has(placement.reportsTo)) {
+        throw new Error(`placements."${id}": "reportsTo" must name an agent in this roster`);
+      }
+    }
+  }
+  assertNoReportingCycle(placements);
+  for (const [id, placement] of Object.entries(placements)) {
+    const agent = byId.get(id);
+    if (placement.department) agent.department = placement.department;
+    if (placement.reportsTo) agent.reportsTo = placement.reportsTo;
+  }
+}
+
+// Walking up from every agent, not just from the one being added, because a
+// cycle can sit entirely above whoever you last edited. The walk is bounded by
+// the number of placements, so a loop reports itself instead of spinning.
+function assertNoReportingCycle(placements) {
+  for (const start of Object.keys(placements)) {
+    const chain = [start];
+    let current = placements[start].reportsTo;
+    while (current) {
+      if (chain.includes(current)) {
+        throw new Error(
+          `placements has a reporting loop: ${[...chain, current].join(' -> ')}. ` +
+          'Someone has to be at the top.'
+        );
+      }
+      chain.push(current);
+      current = placements[current]?.reportsTo;
+    }
+  }
 }
 
 async function loadPrebuiltAgents(ids, ownAgents) {
