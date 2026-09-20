@@ -50,10 +50,10 @@ async function loadConfig() {
   const raw = await fs.readFile(AGENTS_FILE, 'utf-8');
   const parsed = JSON.parse(raw);
   const own = parsed.agents || [];
-  return {
-    agents: [...own, ...(await loadPrebuiltAgents(parsed.prebuilt || [], own))],
-    connectors: parsed.connectors || {}
-  };
+  const agents = [...own, ...(await loadPrebuiltAgents(parsed.prebuilt || [], own))];
+  const connectors = parsed.connectors || {};
+  assertNoThirdPartyNetwork(agents, connectors);
+  return { agents, connectors };
 }
 
 async function loadPrebuiltAgents(ids, ownAgents) {
@@ -219,19 +219,50 @@ function wrapThirdPartyTask(task) {
 // only place tool access can be granted. An agent pointing at a connector that
 // doesn't exist is a config mistake we refuse to guess about: running the task
 // with tools silently missing would look like the agent simply did a bad job.
+//
+// A connector marked "network": true can reach the internet. That flag is ours,
+// not part of the MCP config shape, so it is stripped back out before the
+// definition is handed to the CLI. `networked` comes back alongside so the
+// caller can decide what an agent with the network open is allowed to be told.
 function connectorsFor(agent, connectors) {
   const names = agent.connectors || [];
   if (!Array.isArray(names)) {
     throw new Error(`agent "${agent.id}" has a "connectors" field that isn't a list`);
   }
   const mcpServers = {};
+  let networked = false;
   for (const name of names) {
     if (!Object.prototype.hasOwnProperty.call(connectors, name)) {
       throw new Error(`agent "${agent.id}" refers to unknown connector "${name}"`);
     }
-    mcpServers[name] = connectors[name];
+    const { network, ...definition } = connectors[name];
+    if (network === true) networked = true;
+    mcpServers[name] = definition;
   }
-  return mcpServers;
+  return { mcpServers, networked };
+}
+
+// Refuses, at load, the one combination that turns two safe features into an
+// exfiltration chain: an agent that reads other people's text *and* can reach
+// the internet. Text from a stranger can carry instructions, and a fetch tool
+// is a way to send things out, so an injected post could walk this office's
+// context out inside a URL. Either capability alone is fine. Together they are
+// refused rather than guarded, because a guard here would have to be a judgement
+// call made by the same model the attacker is talking to.
+function assertNoThirdPartyNetwork(agents, connectors) {
+  for (const agent of agents) {
+    if (agent.handlesThirdPartyContent !== true) continue;
+    for (const name of agent.connectors || []) {
+      if (connectors[name]?.network === true) {
+        throw new Error(
+          `agent "${agent.id}" handles third-party content and also has the networked ` +
+          `connector "${name}". That combination can leak this office's context to a ` +
+          `stranger's URL, so it is refused. Drop the connector, or drop ` +
+          `handlesThirdPartyContent and stop pasting other people's text into it.`
+        );
+      }
+    }
+  }
 }
 
 function readBody(req) {
@@ -279,8 +310,11 @@ function runAgent({ systemPrompt, task, model, signal, mcpServers }) {
     }
     if (model) args.push('--model', model);
 
+    // cwd is pinned to the repo so a connector named by a relative path in
+    // agents.json resolves the same way wherever the server was started from.
     const child = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: __dirname,
       signal,
       timeout: AGENT_TIMEOUT_MS
     });
@@ -589,23 +623,33 @@ const server = http.createServer(async (req, res) => {
       }
 
       let mcpServers;
+      let networked;
       try {
-        mcpServers = connectorsFor(agent, connectors);
+        ({ mcpServers, networked } = connectorsFor(agent, connectors));
       } catch (err) {
         sendJSON(res, 500, { error: err.message });
         return;
       }
       const usedConnectors = Object.keys(mcpServers);
 
-      const related = findRelatedNotes(task, agent, await readNotes());
+      // An agent that can reach the internet is told less about this office. A
+      // fetched page is a stranger's writing arriving in the context window, so
+      // it can carry instructions the same way a pasted comment can, and
+      // anything sitting in the prompt can be asked for back out inside a URL.
+      // So a networked agent gets neither the personal layer nor past notes: it
+      // works from the task in front of it. The cost is voice, detail and
+      // continuity. The gain is that an injection finds nothing worth taking.
+      const related = networked ? [] : findRelatedNotes(task, agent, await readNotes());
       const notesBrief = buildNotesBrief(related);
 
-      let profileBrief;
-      try {
-        profileBrief = buildProfileBrief(await loadProfile());
-      } catch (err) {
-        sendJSON(res, 500, { error: err.message });
-        return;
+      let profileBrief = '';
+      if (!networked) {
+        try {
+          profileBrief = buildProfileBrief(await loadProfile());
+        } catch (err) {
+          sendJSON(res, 500, { error: err.message });
+          return;
+        }
       }
 
       const systemPrompt = [
